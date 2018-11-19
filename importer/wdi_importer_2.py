@@ -562,10 +562,10 @@ with transaction.atomic():
         start_index = 4
         end_index = 4 + (end_year - start_year)
 
-        index_year_pairs = zip(
+        index_year_pairs = list(zip(
             range(start_index, end_index + 1), # index
             range(start_year, end_year + 1) # year
-        )
+        ))
 
         def data_values_from_row(row):
             values = get_row_values(row)
