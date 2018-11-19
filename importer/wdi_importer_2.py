@@ -580,6 +580,7 @@ with transaction.atomic():
             ]
 
         not_finished = True
+        total_inserted = 0
 
         while not_finished:
 
@@ -592,7 +593,7 @@ with transaction.atomic():
                     not_finished = True
                     break
 
-            print("Inserting {} data_values rows...".format(len(data_values_to_insert)))
+            logger.info("Inserting {} data_values rows, {} inserted so far.".format(len(data_values_to_insert), total_inserted))
 
             c.executemany("""
                 INSERT INTO
@@ -602,6 +603,8 @@ with transaction.atomic():
                 ON DUPLICATE KEY UPDATE
                     value = VALUES(value)
             """, data_values_to_insert)
+
+            total_inserted += len(data_values_to_insert)
 
 
         sys.exit(1)
