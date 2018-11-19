@@ -173,7 +173,7 @@ indicators = [
     for row in series_ws_rows
 ]
 
-indicators_by_code = {
+indicator_by_code = {
     indicator['code']: indicator
     for indicator in indicators
 }
@@ -184,11 +184,13 @@ categories = list({
     for indicator in indicators
 })
 
-# conver to set to dedupe
-country_names = list({
-    get_row_values(row)[2]
+country_name_by_code = dict(
+    (get_row_values(row)[0].upper().strip(), get_row_values(row)[2])
     for row in country_ws_rows
-})
+)
+
+# Data sheet uses INX for 'Not classified', but Country sheet does not have it.
+country_name_by_code['INX'] = 'Not classified'
 
 
 with transaction.atomic():
@@ -211,7 +213,7 @@ with transaction.atomic():
                 AND variables.code NOT IN %(all_codes)s
         """, {
             'namespace': DATASET_NAMESPACE,
-            'all_codes': list(indicators_by_code.keys())
+            'all_codes': list(indicator_by_code.keys())
         })
 
         variable_rows_to_maybe_remove = list(c.fetchall())
@@ -378,8 +380,8 @@ with transaction.atomic():
         """, [DATASET_NAMESPACE])
 
         for (var_id, code, sourceId) in c.fetchall():
-            if code in indicators_by_code:
-                indicators_by_code[code]['sourceId'] = sourceId
+            if code in indicator_by_code:
+                indicator_by_code[code]['sourceId'] = sourceId
 
         # Update existing sources & insert new ones
 
@@ -502,14 +504,14 @@ with transaction.atomic():
                 OR LOWER(entities.name) IN %(country_names)s
             ORDER BY entities.id ASC
         """, {
-            'country_names': [normalise_country_name(x) for x in country_names]
+            'country_names': [normalise_country_name(x) for x in country_name_by_code.values()]
         })
 
         rows = c.fetchall()
 
         # Merge the two dicts
         # This will be updated with entities added later.
-        entity_id_by_name = {
+        entity_id_by_normalised_name = {
             # country_tool_name → entityId
             **dict((row[0], row[2]) for row in rows if row[0]),
             # entityName → entityId
@@ -518,8 +520,8 @@ with transaction.atomic():
 
         entity_names_to_add = set(
             country_name
-            for country_name in country_names
-            if normalise_country_name(country_name) not in entity_id_by_name
+            for country_name in country_name_by_code.values()
+            if normalise_country_name(country_name) not in entity_id_by_normalised_name
         )
 
         c.executemany("""
@@ -539,7 +541,15 @@ with transaction.atomic():
         """, [entity_names_to_add])
 
         for (name, new_id) in c.fetchall():
-            entity_id_by_name[normalise_country_name(name)] = new_id
+            entity_id_by_normalised_name[normalise_country_name(name)] = new_id
+
+        # The WDI dataset can be inconsistent between sheets, e.g. Country sheet
+        # uses 'Sub-Saharan Africa (IDA & IBRD)' while Data sheet uses
+        # 'Sub-Saharan Africa (IDA & IBRD countries)'.
+        entity_id_by_code = {
+            code: entity_id_by_normalised_name[normalise_country_name(name)]
+            for code, name in country_name_by_code.items()
+        }
 
 
         # ======================================================================
@@ -559,9 +569,9 @@ with transaction.atomic():
 
         def data_values_from_row(row):
             values = get_row_values(row)
-            country_name = normalise_country_name(values[0])
+            country_code = values[1].upper().strip()
             indicator_code = values[3].upper().strip()
-            entity_id = entity_id_by_name[country_name]
+            entity_id = entity_id_by_code[country_code]
             variable_id = variable_id_by_code[indicator_code]
             return [
                 (values[index], year, entity_id, variable_id)
