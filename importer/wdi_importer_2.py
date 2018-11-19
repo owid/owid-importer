@@ -588,7 +588,7 @@ with transaction.atomic():
 
             for row in data_ws_rows:
                 data_values_to_insert += data_values_from_row(row)
-                if len(data_values_to_insert) > 10000:
+                if len(data_values_to_insert) > 50000:
                     not_finished = True
                     break
 
