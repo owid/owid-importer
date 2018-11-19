@@ -45,10 +45,10 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     email = models.EmailField(max_length=255, unique=True)
     name = models.CharField(max_length=255, unique=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    is_active = models.BooleanField(default=True)
-    full_name = models.CharField(max_length=255, null=True)
+    created_at = models.DateTimeField(db_column='createdAt', auto_now_add=True)
+    updated_at = models.DateTimeField(db_column='updatedAt', auto_now=True)
+    is_active = models.BooleanField(db_column='isActive', default=True)
+    full_name = models.CharField(db_column='fullName', max_length=255, null=True)
 
     objects = UserManager()
 
@@ -83,14 +83,13 @@ class Chart(Model):
 
     id = models.AutoField(primary_key=True)
     config = JSONField()
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    last_edited_by = models.ForeignKey(User, to_field='name', on_delete=models.DO_NOTHING, blank=True, null=True,
-                                       db_column='last_edited_by')
-    last_edited_at = models.DateTimeField()
+    created_at = models.DateTimeField(db_column='createdAt', auto_now_add=True)
+    updated_at = models.DateTimeField(db_column='updatedAt', auto_now=True)
+    last_edited_by = models.ForeignKey(User, db_column='lastEditedByUserId', to_field='name', on_delete=models.DO_NOTHING, blank=True, null=True)
+    last_edited_at = models.DateTimeField(db_column='lastEditedAt')
     starred = models.BooleanField(default=False)
-    published_at = models.DateTimeField(null=True)
-    published_by = models.ForeignKey(User, to_field='name', on_delete=models.DO_NOTHING, blank=True, null=True, db_column="published_by", related_name="published_charts")
+    published_at = models.DateTimeField(db_column='publishedAt', null=True)
+    published_by = models.ForeignKey(User, db_column="publishedByUserId", to_field='name', on_delete=models.DO_NOTHING, blank=True, null=True, related_name="published_charts")
 
     @classmethod
     def bake(cls, user, slug):
@@ -141,6 +140,7 @@ class Chart(Model):
                 return type
 
 
+# OBSOLETE
 class DatasetCategory(Model):
     class Meta:
         db_table = "dataset_categories"
@@ -151,6 +151,7 @@ class DatasetCategory(Model):
     fetcher_autocreated = models.BooleanField(default=False)
 
 
+# OBSOLETE
 class DatasetSubcategory(Model):
     class Meta:
         db_table = "dataset_subcategories"
@@ -162,6 +163,17 @@ class DatasetSubcategory(Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+class Tag(Model):
+    class Meta:
+        db_table = "tags"
+
+    name = models.CharField(max_length=255, unique=True)
+    created_at = models.DateTimeField(db_column='createdAt', auto_now_add=True)
+    updated_at = models.DateTimeField(db_column='updatedAt', auto_now=True)
+    parent_id = models.ForeignKey('self', db_column='parentId', blank=True, null=True)
+    is_bulk_import = models.BooleanField(db_column='isBulkImport', default=False) # used to be fetcher_autocreated
+    special_type = models.CharField(db_column='specialType', max_length=255)
+
 
 class Dataset(Model):
     class Meta:
@@ -170,13 +182,26 @@ class Dataset(Model):
 
     name = models.CharField(max_length=255)
     description = models.TextField()
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    categoryId = models.ForeignKey(DatasetCategory, blank=True, null=True, on_delete=models.DO_NOTHING,
-                                      db_column='categoryId')
-    subcategoryId = models.ForeignKey(DatasetSubcategory, blank=True, null=True, on_delete=models.DO_NOTHING,
-                                         db_column='subcategoryId')
+    created_at = models.DateTimeField(db_column='createdAt', auto_now_add=True)
+    updated_at = models.DateTimeField(db_column='updatedAt', auto_now=True)
     namespace = models.CharField(max_length=255, default='owid')
+    is_private = models.BooleanField(db_column='isPrivate', default=False)
+    created_by = models.ForeignKey(User, to_field='name', on_delete=models.DO_NOTHING,
+                                    db_column='createdByUserId', blank=True, null=True)
+    metadata_edited_at = models.DateTimeField(db_column='metadataEditedAt', auto_now_add=True)
+    metadata_edited_by = models.ForeignKey(User, to_field='name', on_delete=models.DO_NOTHING,
+                                    db_column='metadataEditedByUserId', blank=True, null=True)
+    data_edited_at = models.DateTimeField(db_column='dataEditedAt', auto_now_add=True)
+    data_edited_by = models.ForeignKey(User, to_field='name', on_delete=models.DO_NOTHING,
+                                    db_column='dataEditedByUserId', blank=True, null=True)
+
+
+class DatasetTag(Model):
+    class Meta:
+        db_table = "dataset_tags"
+
+    dataset_id = models.ForeignKey(Dataset, db_column='datasetId', blank=False, null=False, primary_key=True)
+    tag_id = models.ForeignKey(Tag, db_column='tagId', blank=False, null=False)
 
 
 class Source(Model):
@@ -186,11 +211,12 @@ class Source(Model):
 
     name = models.CharField(max_length=255)
     description = models.TextField()
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    datasetId = models.IntegerField(db_column='datasetId', blank=True, null=True)
+    created_at = models.DateTimeField(db_column='createdAt', auto_now_add=True)
+    updated_at = models.DateTimeField(db_column='updatedAt', auto_now=True)
+    datasetId = models.ForeignKey(Dataset, db_column='datasetId', blank=True, null=True)
 
 
+# OBSOLETE
 class VariableType(Model):
     class Meta:
         db_table = 'variable_types'
@@ -206,19 +232,19 @@ class Variable(Model):
 
     name = models.CharField(max_length=1000)
     unit = models.CharField(max_length=255)
-    short_unit = models.CharField(max_length=255, null=True)
+    short_unit = models.CharField(db_column='shortUnit', max_length=255, null=True)
 
     display = JSONField()
 
     description = models.TextField(blank=True, null=True)
     datasetId = models.ForeignKey(Dataset, on_delete=models.CASCADE, db_column='datasetId')
     sourceId = models.ForeignKey(Source, on_delete=models.DO_NOTHING, db_column='sourceId')
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    variableTypeId = models.ForeignKey(VariableType, on_delete=models.DO_NOTHING, db_column='variableTypeId')
-    uploaded_by = models.ForeignKey(User, to_field='name', on_delete=models.DO_NOTHING, db_column='uploaded_by',
-                                    blank=True, null=True)
-    uploaded_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(db_column='createdAt', auto_now_add=True)
+    updated_at = models.DateTimeField(db_column='updatedAt', auto_now=True)
+    # variableTypeId = models.ForeignKey(VariableType, on_delete=models.DO_NOTHING, db_column='variableTypeId')
+    # uploaded_by = models.ForeignKey(User, to_field='name', on_delete=models.DO_NOTHING, db_column='uploaded_by',
+    #                                 blank=True, null=True)
+    # uploaded_at = models.DateTimeField(db_column='uploadedAt', auto_now_add=True)
     code = models.CharField(max_length=255, blank=True, null=True)
     coverage = models.CharField(max_length=255)
     timespan = models.CharField(max_length=255)
@@ -248,8 +274,8 @@ class Entity(Model):
     code = models.CharField(max_length=255, blank=True, null=True, unique=True)
     name = models.CharField(max_length=255, unique=True)
     validated = models.BooleanField()
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(db_column='createdAt', auto_now_add=True)
+    updated_at = models.DateTimeField(db_column='updatedAt', auto_now=True)
     displayName = models.CharField(db_column='displayName', max_length=255)
 
 

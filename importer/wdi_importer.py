@@ -8,10 +8,11 @@ import unidecode
 import shutil
 import time
 import zipfile
+# allow imports from parent directory
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 import grapher_admin.wsgi
 from openpyxl import load_workbook
-from grapher_admin.models import Entity, DatasetSubcategory, DatasetCategory, Dataset, Source, Variable, VariableType, DataValue, ChartDimension
+from grapher_admin.models import Entity, Dataset, DatasetTag, Source, Variable, Tag, DataValue, ChartDimension # rewrite removed DatasetSubcategory # rewrite removed DatasetCategory # rewrite removed VariableType
 from importer.models import ImportHistory, AdditionalCountryInfo
 from country_name_tool.models import CountryName
 from django.conf import settings
@@ -20,44 +21,7 @@ from django.utils import timezone
 from django.urls import reverse
 from grapher_admin.views import write_dataset_csv
 
-
-# we will use the file checksum to check if the downloaded file has changed since we last saw it
-def file_checksum(filename, blocksize=2**20):
-    m = hashlib.md5()
-    with open(filename, "rb") as f:
-        while True:
-            buffer = f.read(blocksize)
-            if not buffer:
-                break
-            m.update(buffer)
-    return m.hexdigest()
-
-
-def short_unit_extract(unit: str):
-    common_short_units = ['$', '£', '€', '%']  # used for extracting short forms of units of measurement
-    short_unit = None
-    if unit:
-        if ' per ' in unit:
-            short_form = unit.split(' per ')[0]
-            if any(w in short_form for w in common_short_units):
-                for x in common_short_units:
-                    if x in short_form:
-                        short_unit = x
-                        break
-            else:
-                short_unit = short_form
-        elif any(x in unit for x in common_short_units):
-            for y in common_short_units:
-                if y in unit:
-                    short_unit = y
-                    break
-        elif 'percentage' in unit:
-            short_unit = '%'
-        elif 'percent' in unit.lower():
-            short_unit = '%'
-        elif len(unit) < 9:  # this length is sort of arbitrary at this point, taken from the unit 'hectares'
-            short_unit = unit
-    return short_unit
+from importer_utils import file_checksum, extract_short_unit, get_row_values, starts_with, default
 
 
 source_description = {
@@ -66,50 +30,90 @@ source_description = {
     'retrievedDate': timezone.now().strftime("%d-%B-%y")
 }
 
+DATASET_NAMESPACE = 'wdi'
+WDI_TAG_NAME = 'World Development Indicators'  # set the name of the root category of all data that will be imported by this script
+WDI_ZIP_FILE_URL = 'http://databank.worldbank.org/data/download/WDI_excel.zip'
+WDI_DOWNLOADS_PATH = settings.BASE_DIR + '/data/wdi_downloads/'
 
-wdi_zip_file_url = 'http://databank.worldbank.org/data/download/WDI_excel.zip'
-wdi_downloads_save_location = settings.BASE_DIR + '/data/wdi_downloads/'
-
-# create a directory for holding the downloads
-# if the directory exists, delete it and recreate it
-
-if not os.path.exists(wdi_downloads_save_location):
-    os.makedirs(wdi_downloads_save_location)
-#else:
-#    shutil.rmtree(wdi_downloads_save_location)
-#    os.makedirs(wdi_downloads_save_location)
+# The column headers we expect the sheets to have.
+# We will only check that the headers begin with the columns listed here, if
+# there are additional columns, that's fine and it shouldn't affect our script.
+SERIES_EXPECTED_HEADERS = ('Series Code', 'Topic', 'Indicator Name', 'Short definition', 'Long definition', 'Unit of measure', 'Periodicity', 'Base Period', 'Other notes', 'Aggregation method', 'Limitations and exceptions', 'Notes from original source', 'General comments', 'Source', 'Statistical concept and methodology', 'Development relevance', 'Related source links', 'Other web links', 'Related indicators', 'License Type')
+DATA_EXPECTED_HEADERS = ('Country Name', 'Country Code', 'Indicator Name', 'Indicator Code', '1960')
+COUNTRY_EXPECTED_HEADERS = ('Country Code', 'Short Name', 'Table Name', 'Long Name', '2-alpha code', 'Currency Unit', 'Special Notes', 'Region', 'Income Group', 'WB-2 code', 'National accounts base year', 'National accounts reference year', 'SNA price valuation', 'Lending category', 'Other groups', 'System of National Accounts', 'Alternative conversion factor', 'PPP survey year', 'Balance of Payments Manual in use', 'External debt Reporting status', 'System of trade', 'Government Accounting concept', 'IMF data dissemination standard', 'Latest population census', 'Latest household survey', 'Source of most recent Income and expenditure data', 'Vital registration complete', 'Latest agricultural census', 'Latest industrial data', 'Latest trade data')
 
 logger = logging.getLogger('importer')
 start_time = time.time()
 
-logger.info("Getting the zip file")
-request_header = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36'}
-r = requests.get(wdi_zip_file_url, stream=True, headers=request_header)
-if r.ok:
-    with open(wdi_downloads_save_location + 'wdi.zip', 'wb') as out_file:
-        shutil.copyfileobj(r.raw, out_file)
-    logger.info("Saved the zip file to disk.")
-    z = zipfile.ZipFile(wdi_downloads_save_location + 'wdi.zip')
-    excel_filename = wdi_downloads_save_location + z.namelist()[0]  # there should be only one file inside the zipfile, so we will load that one
-    z.extractall(wdi_downloads_save_location)
-    r = None  # we do not need the request anymore
-    logger.info("Successfully extracted the zip file")
-else:
-    logger.error("The file could not be downloaded. Stopping the script...")
-    sys.exit("Could not download file.")
+def terminate(message):
+    logger.error(message)
+    sys.exit(1)
 
-wdi_category_name_in_db = 'World Development Indicators'  # set the name of the root category of all data that will be imported by this script
+# Extract indicator from row in Series worksheet
+def get_indicator_from_row(row):
+    values = get_row_values(row)
+    code = values[0].upper().strip()
+    indicator = {
+        'code': code,
+        'category': values[1].split(':')[0],
+        'name': values[2],
+        'description': values[4],
+        'unitofmeasure': default(values[5], ''),
+        'short_unit': None, # we will derive it later
+        'limitations': default(values[10], ''),
+        'sourcesnotes': default(values[11], ''),
+        'comments': default(values[12], ''),
+        'source': values[13],
+        'concept': default(values[14], ''),
+        'sourcelinks': default(values[16], ''),
+        'weblinks': default(values[17], ''),
+        'saved': False
+    }
+    # if no unit is specified, try to derive it from the name
+    if not indicator['unitofmeasure'] and '(' in indicator['name'] and ')' in indicator['name']:
+        indicator['unitofmeasure'] = indicator['name'][
+            indicator['name'].rfind('(') + 1:
+            indicator['name'].rfind(')')
+        ]
+    # derive the short unit
+    indicator['short_unit'] = extract_short_unit(indicator['unitofmeasure'])
+    return indicator
 
-import_history = ImportHistory.objects.filter(import_type='wdi')
+# Create a directory for holding the downloads.
+if not os.path.exists(WDI_DOWNLOADS_PATH):
+    os.makedirs(WDI_DOWNLOADS_PATH)
 
-#excel_filename = wdi_downloads_save_location + "WDIEXCEL.xlsx"
+# logger.info("Getting the zip file")
+# request_header = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36'}
+# r = requests.get(WDI_ZIP_FILE_URL, stream=True, headers=request_header)
+# if r.ok:
+#     with open(WDI_DOWNLOADS_PATH + 'wdi.zip', 'wb') as out_file:
+#         shutil.copyfileobj(r.raw, out_file)
+#     logger.info("Saved the zip file to disk.")
+#     z = zipfile.ZipFile(WDI_DOWNLOADS_PATH + 'wdi.zip')
+#     excel_filepath = WDI_DOWNLOADS_PATH + z.namelist()[0]  # there should be only one file inside the zipfile, so we will load that one
+#     z.extractall(WDI_DOWNLOADS_PATH)
+#     r = None  # we do not need the request anymore
+#     logger.info("Successfully extracted the zip file")
+# else:
+#     logger.error("The file could not be downloaded. Stopping the script...")
+#     sys.exit("Could not download file.")
+
+import_history = ImportHistory.objects.filter(import_type=DATASET_NAMESPACE)
+
+excel_filepath = WDI_DOWNLOADS_PATH + "WDIEXCEL.xlsx"
 
 with transaction.atomic():
     # if wdi imports were never performed
     if not import_history:
+        terminate("""The WDI data import has not been run before.
+
+        The part of the script that deals with a fresh import is outdated and needs some fixes applied.
+        """)
+
         logger.info("This is the very first WDI data import.")
 
-        wb = load_workbook(excel_filename, read_only=True)
+        wb = load_workbook(excel_filepath, read_only=True)
 
         series_ws = wb['Series']
         data_ws = wb['Data']
@@ -193,18 +197,18 @@ with transaction.atomic():
                 category_vars[value['category']] = []
                 category_vars[value['category']].append(key)
 
-        existing_categories = DatasetCategory.objects.values('name')
+        existing_categories = Tag.objects.values('name') # rewrite removed DatasetCategory
         existing_categories_list = {item['name'] for item in existing_categories}
 
-        if wdi_category_name_in_db not in existing_categories_list:
-            the_category = DatasetCategory(name=wdi_category_name_in_db, fetcher_autocreated=True)
-            the_category.save()
-            logger.info("Inserting a category %s." % wdi_category_name_in_db.encode('utf8'))
+        if WDI_TAG_NAME not in existing_categories_list:
+            parent_tag = Tag(name=WDI_TAG_NAME, is_bulk_import=True) # rewrite removed DatasetCategory
+            parent_tag.save()
+            logger.info("Inserting a category %s." % WDI_TAG_NAME.encode('utf8'))
 
         else:
-            the_category = DatasetCategory.objects.get(name=wdi_category_name_in_db)
+            parent_tag = Tag.objects.get(name=WDI_TAG_NAME) # rewrite removed DatasetCategory
 
-        existing_subcategories = DatasetSubcategory.objects.filter(categoryId=the_category.pk).values('name')
+        existing_subcategories = Tag.objects.filter(parent_id=parent_tag).values('name') # rewrite removed DatasetSubcategory
         existing_subcategories_list = {item['name'] for item in existing_subcategories}
 
         wdi_categories_list = []
@@ -212,7 +216,7 @@ with transaction.atomic():
         for key, value in category_vars.items():
             wdi_categories_list.append(key)
             if key not in existing_subcategories_list:
-                the_subcategory = DatasetSubcategory(name=key, categoryId=the_category)
+                the_subcategory = Tag(name=key, parent_id=parent_tag) # rewrite removed DatasetSubcategory
                 the_subcategory.save()
                 logger.info("Inserting a subcategory %s." % key.encode('utf8'))
 
@@ -248,7 +252,7 @@ with transaction.atomic():
                         country_latest_survey = cell.value
                     if column_number == 26:
                         country_recent_income_source = cell.value
-                    if column_number == 31:
+                    if column_number == 30:
                         entity_info = AdditionalCountryInfo()
                         entity_info.country_code = country_code
                         entity_info.country_name = country_name
@@ -277,9 +281,10 @@ with transaction.atomic():
         for category in wdi_categories_list:
             newdataset = Dataset(name='World Development Indicators - ' + category,
                                  description='This is a dataset imported by the automated fetcher',
-                                 namespace='wdi', categoryId=the_category,
-                                 subcategoryId=DatasetSubcategory.objects.get(name=category, categoryId=the_category))
+                                 namespace=DATASET_NAMESPACE) # rewrite removed DatasetSubcategory
             newdataset.save()
+            dataset_tag = DatasetTag(dataset_id=newdataset, tag_id=parent_tag)
+            dataset_tag.save()
             datasets_list.append(newdataset)
             logger.info("Inserting a dataset %s." % newdataset.name.encode('utf8'))
             row_number = 0
@@ -324,12 +329,12 @@ with transaction.atomic():
                                             source_description['dataPublishedBy'] = 'World Bank – World Development Indicators'
                                         newsource = Source(name='World Bank – WDI: ' + global_cat[indicator_code]['name'],
                                                            description=json.dumps(source_description),
-                                                           datasetId=newdataset.pk)
+                                                           datasetId=newdataset)
                                         newsource.save()
                                         logger.info("Inserting a source %s." % newsource.name.encode('utf8'))
-                                        s_unit = short_unit_extract(global_cat[indicator_code]['unitofmeasure'])
+                                        s_unit = extract_short_unit(global_cat[indicator_code]['unitofmeasure'])
                                         newvariable = Variable(name=global_cat[indicator_code]['name'], unit=global_cat[indicator_code]['unitofmeasure'] if global_cat[indicator_code]['unitofmeasure'] else '', short_unit=s_unit, description=global_cat[indicator_code]['description'],
-                                                               code=indicator_code, timespan='1960-' + str(last_available_year), datasetId=newdataset, variableTypeId=VariableType.objects.get(pk=4), sourceId=newsource)
+                                                               code=indicator_code, timespan='1960-' + str(last_available_year), datasetId=newdataset, sourceId=newsource) # rewrite removed VariableType
                                         newvariable.save()
                                         logger.info("Inserting a variable %s." % newvariable.name.encode('utf8'))
                                         global_cat[indicator_code]['variable_object'] = newvariable
@@ -353,136 +358,103 @@ with transaction.atomic():
                 c.executemany(insert_string, data_values_tuple_list)
             logger.info("Dumping data values...")
 
-        newimport = ImportHistory(import_type='wdi', import_time=timezone.now().strftime('%Y-%m-%d %H:%M:%S'),
+        newimport = ImportHistory(import_type=DATASET_NAMESPACE, import_time=timezone.now().strftime('%Y-%m-%d %H:%M:%S'),
                                   import_notes='Initial import of WDI',
-                                  import_state=json.dumps({'file_hash': file_checksum(wdi_downloads_save_location + 'wdi.zip')}))
+                                  import_state=json.dumps({'file_hash': file_checksum(WDI_DOWNLOADS_PATH + 'wdi.zip')}))
         newimport.save()
-        for dataset in datasets_list:
-            write_dataset_csv(dataset.pk, dataset.name, None, 'wdi_fetcher', '')
+        # for dataset in datasets_list:
+            # write_dataset_csv(dataset.pk, dataset.name, None, 'wdi_fetcher', '')
         logger.info("Import complete.")
 
     else:
         last_import = import_history.last()
-        deleted_indicators = {}  # This is used to keep track which variables' data values were already deleted before writing new values
 
-        if json.loads(last_import.import_state)['file_hash'] == file_checksum(wdi_downloads_save_location + 'wdi.zip'):
+        if json.loads(last_import.import_state)['file_hash'] == file_checksum(WDI_DOWNLOADS_PATH + 'wdi.zip'):
             logger.info('No updates available.')
-            sys.exit('No updates available.')
+            sys.exit(0)
 
         logger.info('New data is available.')
-        available_variables = Variable.objects.filter(datasetId__in=Dataset.objects.filter(namespace='wdi'))
-        available_variables_list = []
 
-        for each in available_variables.values('code'):
-            available_variables_list.append(each['code'])
+        # ======================================================================
+        # Load the worksheets we will need and check that they have the columns
+        # we expect.
+        # ======================================================================
 
-        chart_dimension_vars = ChartDimension.objects.all().values('variableId').distinct()
-        chart_dimension_vars_list = {item['variableId'] for item in chart_dimension_vars}
+        wb = load_workbook(excel_filepath, read_only=True)
+
+        series_ws_rows = wb['Series'].rows
+        data_ws_rows = wb['Data'].rows
+        country_ws_rows = wb['Country'].rows
+
+        series_headers = get_row_values(next(series_ws_rows))
+        data_headers = get_row_values(next(data_ws_rows))
+        country_headers = get_row_values(next(country_ws_rows))
+
+        if not starts_with(series_headers, SERIES_EXPECTED_HEADERS):
+            terminate("Headers mismatch on 'Series' worksheet")
+        if not starts_with(data_headers, DATA_EXPECTED_HEADERS):
+            terminate("Headers mismatch on 'Data' worksheet")
+        if not starts_with(country_headers, COUNTRY_EXPECTED_HEADERS):
+            terminate("Headers mismatch on 'Country' worksheet")
+
+        # ======================================================================
+        # Initialise the data structures to track the state of the import.
+        # ======================================================================
+
+        deleted_indicators = {}  # This is used to keep track which variables' data values were already deleted before writing new values
+        global_cat = {}  # global catalog of indicators
+
+        available_variables = Variable.objects.filter(datasetId__in=Dataset.objects.filter(namespace=DATASET_NAMESPACE))
+        available_variables_codes = [var['code'] for var in available_variables.values('code')]
+
+        chart_dimension_var_ids = {
+            item['variableId']
+            for item in ChartDimension.objects.all().values('variableId').distinct()
+        }
+
         existing_variables_ids = [item['id'] for item in available_variables.values('id')]
         existing_variables_id_code = {item['id']: item['code'] for item in available_variables.values('id', 'code')}
         existing_variables_code_id = {item['code']: item['id'] for item in available_variables.values('id', 'code')}
 
-        vars_being_used = []  # we will not be deleting any variables that are currently being used by charts
-        for each_var in existing_variables_ids:
-            if each_var in chart_dimension_vars_list:
-                vars_being_used.append(existing_variables_id_code[each_var])
+        # we will not be deleting any variables that are currently being used by charts
+        var_codes_being_used = [
+            existing_variables_id_code[var_id]
+            for var_id in existing_variables_ids
+            if var_id in chart_dimension_var_ids
+        ]
 
-        wb = load_workbook(excel_filename, read_only=True)
-
-        series_ws = wb['Series']
-        data_ws = wb['Data']
-        country_ws = wb['Country']
+        # ======================================================================
+        # Initialise the data structures to track the state of the import.
+        # ======================================================================
 
         column_number = 0  # this will be reset to 0 on each new row
         row_number = 0  # this will be reset to 0 if we switch to another worksheet, or start reading the worksheet from the beginning one more time
 
-        global_cat = {}  # global catalog of indicators
+        # Data in the worksheets is read row by row, to avoid going exceeding
+        # the limits of the heap and crashing the program.
 
-        # data in the worksheets is not loaded into memory at once, that causes RAM to quickly fill up
-        # instead, we go through each row and cell one-by-one, looking at each piece of data separately
-        # this has the disadvantage of needing to traverse the worksheet several times, if we need to look up some rows/cells again
+        for row in series_ws_rows:
+            indicator = get_indicator_from_row(row)
+            # store the indicator in the global catalog
+            global_cat[indicator['code']] = indicator
 
-        for row in series_ws.rows:
-            row_number += 1
-            for cell in row:
-                if row_number > 1:
-                    column_number += 1
-                    if column_number == 1:
-                        global_cat[cell.value.upper().strip()] = {}
-                        indicatordict = global_cat[cell.value.upper().strip()]
-                    if column_number == 2:
-                        indicatordict['category'] = cell.value.split(':')[0]
-                    if column_number == 3:
-                        indicatordict['name'] = cell.value
-                    if column_number == 5:
-                        indicatordict['description'] = cell.value
-                    if column_number == 6:
-                        if cell.value:
-                            indicatordict['unitofmeasure'] = cell.value
-                        else:
-                            if '(' not in indicatordict['name']:
-                                indicatordict['unitofmeasure'] = ''
-                            else:
-                                indicatordict['unitofmeasure'] = indicatordict['name'][
-                                                                 indicatordict['name'].rfind('(') + 1:indicatordict[
-                                                                     'name'].rfind(')')]
-                    if column_number == 11:
-                        if cell.value:
-                            indicatordict['limitations'] = cell.value
-                        else:
-                            indicatordict['limitations'] = ''
-                    if column_number == 12:
-                        if cell.value:
-                            indicatordict['sourcenotes'] = cell.value
-                        else:
-                            indicatordict['sourcenotes'] = ''
-                    if column_number == 13:
-                        if cell.value:
-                            indicatordict['comments'] = cell.value
-                        else:
-                            indicatordict['comments'] = ''
-                    if column_number == 14:
-                        indicatordict['source'] = cell.value
-                    if column_number == 15:
-                        if cell.value:
-                            indicatordict['concept'] = cell.value
-                        else:
-                            indicatordict['concept'] = ''
-                    if column_number == 17:
-                        if cell.value:
-                            indicatordict['sourcelinks'] = cell.value
-                        else:
-                            indicatordict['sourcelinks'] = ''
-                    if column_number == 18:
-                        if cell.value:
-                            indicatordict['weblinks'] = cell.value
-                        else:
-                            indicatordict['weblinks'] = ''
-                    indicatordict['saved'] = False
+        new_var_codes = set(global_cat.keys())
 
-            column_number = 0
+        var_codes_to_add = list(new_var_codes.difference(available_variables_codes))
+        newly_added_var_codes = list(new_var_codes.difference(available_variables_codes))
+        var_codes_to_delete = list(set(available_variables_codes).difference(new_var_codes).difference(var_codes_being_used))
 
-        new_variables = []
-
-        for key, value in global_cat.items():
-            new_variables.append(key)
-
-        vars_to_add = list(set(new_variables).difference(available_variables_list))
-        newly_added_vars = list(set(new_variables).difference(available_variables_list))
-        vars_to_delete = list(set(available_variables_list).difference(new_variables))
-
-        for each in vars_to_delete:
-            if each not in vars_being_used:
-                logger.info("Deleting data values for the variable: %s" % each.encode('utf8'))
-                while DataValue.objects.filter(variableId__pk=existing_variables_code_id[each]).first():
-                    with connection.cursor() as c:  # if we don't limit the deleted values, the db might just hang
-                        c.execute('DELETE FROM %s WHERE variableId = %s LIMIT 10000;' %
-                                  (DataValue._meta.db_table, existing_variables_code_id[each]))
-                source_object = Variable.objects.get(code=each, datasetId__in=Dataset.objects.filter(namespace='wdi')).sourceId
-                Variable.objects.get(code=each, datasetId__in=Dataset.objects.filter(namespace='wdi')).delete()
-                logger.info("Deleting the variable: %s" % each.encode('utf8'))
-                logger.info("Deleting the source: %s" % source_object.name.encode('utf8'))
-                source_object.delete()
+        for var_code in var_codes_to_delete:
+            logger.info("Deleting data values for the variable: %s" % var_code.encode('utf8'))
+            while DataValue.objects.filter(variableId__pk=existing_variables_code_id[var_code]).first():
+                with connection.cursor() as c:  # if we don't limit the deleted values, the db might just hang
+                    c.execute('DELETE FROM %s WHERE variableId = %s LIMIT 10000;' %
+                                (DataValue._meta.db_table, existing_variables_code_id[var_code]))
+            source_object = Variable.objects.get(code=var_code, datasetId__in=Dataset.objects.filter(namespace=DATASET_NAMESPACE)).sourceId
+            Variable.objects.get(code=var_code, datasetId__in=Dataset.objects.filter(namespace=DATASET_NAMESPACE)).delete()
+            logger.info("Deleting the variable: %s" % var_code.encode('utf8'))
+            logger.info("Deleting the source: %s" % source_object.name.encode('utf8'))
+            source_object.delete()
 
         category_vars = {}  # categories and their corresponding variables
 
@@ -493,18 +465,18 @@ with transaction.atomic():
                 category_vars[value['category']] = []
                 category_vars[value['category']].append(key)
 
-        existing_categories = DatasetCategory.objects.values('name')
+        existing_categories = Tag.objects.values('name') # rewrite removed DatasetCategory
         existing_categories_list = {item['name'] for item in existing_categories}
 
-        if wdi_category_name_in_db not in existing_categories_list:
-            the_category = DatasetCategory(name=wdi_category_name_in_db, fetcher_autocreated=True)
-            the_category.save()
-            logger.info("Inserting a category %s." % wdi_category_name_in_db.encode('utf8'))
+        if WDI_TAG_NAME not in existing_categories_list:
+            parent_tag = Tag(name=WDI_TAG_NAME, is_bulk_import=True) # rewrite removed DatasetCategory
+            parent_tag.save()
+            logger.info("Inserting a category %s." % WDI_TAG_NAME.encode('utf8'))
 
         else:
-            the_category = DatasetCategory.objects.get(name=wdi_category_name_in_db)
+            parent_tag = Tag.objects.get(name=WDI_TAG_NAME) # rewrite removed DatasetCategory
 
-        existing_subcategories = DatasetSubcategory.objects.filter(categoryId=the_category).values('name')
+        existing_subcategories = Tag.objects.filter(parent_id=parent_tag).values('name') # rewrite removed DatasetSubcategory
         existing_subcategories_list = {item['name'] for item in existing_subcategories}
 
         wdi_categories_list = []
@@ -512,7 +484,7 @@ with transaction.atomic():
         for key, value in category_vars.items():
             wdi_categories_list.append(key)
             if key not in existing_subcategories_list:
-                the_subcategory = DatasetSubcategory(name=key, categoryId=the_category)
+                the_subcategory = Tag(name=key, parent_id=parent_tag) # rewrite removed DatasetSubcategory
                 the_subcategory.save()
                 logger.info("Inserting a subcategory %s." % key.encode('utf8'))
 
@@ -528,10 +500,10 @@ with transaction.atomic():
 
         country_name_entity_ref = {}  # this dict will hold the country names from excel and the appropriate entity object (this is used when saving the variables and their values)
 
-        AdditionalCountryInfo.objects.filter(dataset='wdi').delete()  # We will load new additional country data now
+        AdditionalCountryInfo.objects.filter(dataset=DATASET_NAMESPACE).delete()  # We will load new additional country data now
 
         row_number = 0
-        for row in country_ws.rows:
+        for row in country_ws_rows:
             row_number += 1
             for cell in row:
                 if row_number > 1:
@@ -552,7 +524,7 @@ with transaction.atomic():
                         country_latest_survey = cell.value
                     if column_number == 26:
                         country_recent_income_source = cell.value
-                    if column_number == 31:
+                    if column_number == 30:
                         entity_info = AdditionalCountryInfo()
                         entity_info.country_code = country_code
                         entity_info.country_name = country_name
@@ -585,18 +557,19 @@ with transaction.atomic():
             if category in cats_to_add:
                 newdataset = Dataset(name='World Development Indicators - ' + category,
                                      description='This is a dataset imported by the automated fetcher',
-                                     namespace='wdi', categoryId=the_category,
-                                     subcategoryId=DatasetSubcategory.objects.get(name=category,
-                                                                                     categoryId=the_category))
+                                     namespace=DATASET_NAMESPACE)
                 newdataset.save()
+                dataset_tag = DatasetTag(dataset_id=newdataset, tag_id=parent_tag)
+                dataset_tag.save()
                 dataset_id_oldname_list.append({'id': newdataset.pk, 'newname': newdataset.name, 'oldname': None})
                 logger.info("Inserting a dataset %s." % newdataset.name.encode('utf8'))
             else:
-                newdataset = Dataset.objects.get(name='World Development Indicators - ' + category, categoryId=DatasetCategory.objects.get(
-                                                                                         name=wdi_category_name_in_db))
+                newdataset = Dataset.objects.get(name='World Development Indicators - ' + category)
                 dataset_id_oldname_list.append({'id': newdataset.pk, 'newname': newdataset.name, 'oldname': newdataset.name})
             row_number = 0
-            for row in data_ws.rows:
+            # TODO problem! This does multiple passes through the data
+            # It will fail with the new early dereferenced generator
+            for row in data_ws_rows:
                 row_number += 1
                 data_values = []
                 for cell in row:
@@ -623,7 +596,7 @@ with transaction.atomic():
                             if len(data_values):
                                 if indicator_code in category_vars[category]:
                                     total_values_tracker += len(data_values)
-                                    if indicator_code in vars_to_add:
+                                    if indicator_code in var_codes_to_add:
                                         source_description['additionalInfo'] = "Definitions and characteristics of countries and other territories: " + "https://ourworldindata.org" + reverse("servewdicountryinfo") + "\n"
                                         source_description['additionalInfo'] += "Limitations and exceptions:\n" + global_cat[indicator_code]['limitations'] + "\n" if global_cat[indicator_code]['limitations'] else ''
                                         source_description['additionalInfo'] += "Notes from original source:\n" + global_cat[indicator_code]['sourcenotes'] + "\n" if global_cat[indicator_code]['sourcenotes'] else ''
@@ -638,11 +611,11 @@ with transaction.atomic():
                                             source_description['dataPublishedBy'] = 'World Bank – World Development Indicators'
                                         newsource = Source(name='World Bank – WDI: ' + global_cat[indicator_code]['name'],
                                                            description=json.dumps(source_description),
-                                                           datasetId=newdataset.pk)
+                                                           datasetId=newdataset)
                                         newsource.save()
                                         logger.info("Inserting a source %s." % newsource.name.encode('utf8'))
                                         global_cat[indicator_code]['source_object'] = newsource
-                                        s_unit = short_unit_extract(global_cat[indicator_code]['unitofmeasure'])
+                                        s_unit = extract_short_unit(global_cat[indicator_code]['unitofmeasure'])
                                         newvariable = Variable(name=global_cat[indicator_code]['name'],
                                                                unit=global_cat[indicator_code]['unitofmeasure'] if
                                                                global_cat[indicator_code]['unitofmeasure'] else '',
@@ -651,16 +624,15 @@ with transaction.atomic():
                                                                code=indicator_code,
                                                                timespan='1960-' + str(last_available_year),
                                                                datasetId=newdataset,
-                                                               variableTypeId=VariableType.objects.get(pk=4),
                                                                sourceId=newsource)
                                         newvariable.save()
                                         global_cat[indicator_code]['variable_object'] = newvariable
-                                        vars_to_add.remove(indicator_code)
+                                        var_codes_to_add.remove(indicator_code)
                                         global_cat[indicator_code]['saved'] = True
                                         logger.info("Inserting a variable %s." % newvariable.name.encode('utf8'))
                                     else:
                                         if not global_cat[indicator_code]['saved']:
-                                            newsource = Source.objects.get(name='World Bank – WDI: ' + Variable.objects.get(code=indicator_code, datasetId__in=Dataset.objects.filter(namespace='wdi')).name)
+                                            newsource = Source.objects.get(name='World Bank – WDI: ' + Variable.objects.get(code=indicator_code, datasetId__in=Dataset.objects.filter(namespace=DATASET_NAMESPACE)).name)
                                             newsource.name = 'World Bank – WDI: ' + global_cat[indicator_code]['name']
                                             source_description['additionalInfo'] = "Definitions and characteristics of countries and other territories: " + "https://ourworldindata.org" + reverse("servewdicountryinfo") + "\n"
                                             source_description['additionalInfo'] += "Limitations and exceptions:\n" + global_cat[indicator_code]['limitations'] + "\n" if global_cat[indicator_code]['limitations'] else ''
@@ -680,11 +652,11 @@ with transaction.atomic():
                                                 source_description[
                                                     'dataPublishedBy'] = 'World Bank – World Development Indicators'
                                             newsource.description=json.dumps(source_description)
-                                            newsource.datasetId=newdataset.pk
+                                            newsource.datasetId=newdataset
                                             newsource.save()
                                             logger.info("Updating the source %s." % newsource.name.encode('utf8'))
-                                            s_unit = short_unit_extract(global_cat[indicator_code]['unitofmeasure'])
-                                            newvariable = Variable.objects.get(code=indicator_code, datasetId__in=Dataset.objects.filter(namespace='wdi'))
+                                            s_unit = extract_short_unit(global_cat[indicator_code]['unitofmeasure'])
+                                            newvariable = Variable.objects.get(code=indicator_code, datasetId__in=Dataset.objects.filter(namespace=DATASET_NAMESPACE))
                                             newvariable.name = global_cat[indicator_code]['name']
                                             newvariable.unit=global_cat[indicator_code]['unitofmeasure'] if global_cat[indicator_code]['unitofmeasure'] else ''
                                             newvariable.short_unit = s_unit
@@ -698,7 +670,7 @@ with transaction.atomic():
                                             global_cat[indicator_code]['saved'] = True
                                         else:
                                             newvariable = global_cat[indicator_code]['variable_object']
-                                        if indicator_code not in newly_added_vars:
+                                        if indicator_code not in newly_added_var_codes:
                                             if not deleted_indicators.get(indicator_code, 0):
                                                 while DataValue.objects.filter(variableId__pk=newvariable.pk).first():
                                                     with connection.cursor() as c:
@@ -728,7 +700,7 @@ with transaction.atomic():
 
         # now deleting subcategories and datasets that are empty (that don't contain any variables), if any
 
-        all_wdi_datasets = Dataset.objects.filter(namespace='wdi')
+        all_wdi_datasets = Dataset.objects.filter(namespace=DATASET_NAMESPACE)
         all_wdi_datasets_with_vars = Variable.objects.filter(datasetId__in=all_wdi_datasets).values(
             'datasetId').distinct()
         all_wdi_datasets_with_vars_dict = {item['datasetId'] for item in all_wdi_datasets_with_vars}
@@ -741,14 +713,14 @@ with transaction.atomic():
                 each.delete()
                 cat_to_delete.delete()
 
-        newimport = ImportHistory(import_type='wdi', import_time=timezone.now().strftime('%Y-%m-%d %H:%M:%S'),
+        newimport = ImportHistory(import_type=DATASET_NAMESPACE, import_time=timezone.now().strftime('%Y-%m-%d %H:%M:%S'),
                                   import_notes='Imported a total of %s data values.' % total_values_tracker,
                                   import_state=json.dumps(
-                                      {'file_hash': file_checksum(wdi_downloads_save_location + 'wdi.zip')}))
+                                      {'file_hash': file_checksum(WDI_DOWNLOADS_PATH + 'wdi.zip')}))
         newimport.save()
 
         # now exporting csvs to the repo
-        for dataset in dataset_id_oldname_list:
-            write_dataset_csv(dataset['id'], dataset['newname'], dataset['oldname'], 'wdi_fetcher', '')
+        # for dataset in dataset_id_oldname_list:
+            # write_dataset_csv(dataset['id'], dataset['newname'], dataset['oldname'], 'wdi_fetcher', '')
 
 print("--- %s seconds ---" % (time.time() - start_time))
