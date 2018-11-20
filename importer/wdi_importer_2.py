@@ -215,47 +215,50 @@ with connection as c:
         'all_codes': list(indicator_by_code.keys())
     })
 
-    variable_rows_to_maybe_remove = list(c.fetchall()) # convert to list, we will iterate it twice
+    variables_to_maybe_remove = list(c.fetchall()) # convert to list, we will iterate it twice
 
     # Variables that are no longer present in the spreadsheet will be
     # removed if no chart uses them. Otherwise, they will be left to be
     # manually investigated (some variables may have been renamed).
-    var_ids_to_remove      = [var_id for var_id, is_used in variable_rows_to_maybe_remove if not is_used]
-    var_ids_to_discontinue = [var_id for var_id, is_used in variable_rows_to_maybe_remove if is_used]
+    var_ids_to_remove      = [var_id for var_id, is_used in variables_to_maybe_remove if not is_used]
+    var_ids_to_discontinue = [var_id for var_id, is_used in variables_to_maybe_remove if is_used]
 
     assert len(set(var_ids_to_remove) & set(var_ids_to_discontinue)) == 0
 
     # Store the source IDs that need to be removed. Since variables need to
     # be removed first, we will lose the reference to the unused sources
     # unless we save them.
-    c.execute("""
-        SELECT DISTINCT sources.id
-        FROM sources
-        LEFT JOIN variables ON variables.sourceId = sources.id
-        WHERE variables.id IN %s
-    """, [var_ids_to_remove])
+    if var_ids_to_remove:
 
-    source_ids_to_remove = [source_id for source_id in c.fetchall()]
+        c.execute("""
+            SELECT DISTINCT sources.id
+            FROM sources
+            LEFT JOIN variables ON variables.sourceId = sources.id
+            WHERE variables.id IN %s
+        """, [var_ids_to_remove])
 
-    c.execute("""
-        DELETE FROM data_values
-        WHERE variableId IN %s
-    """, [var_ids_to_remove])
+        source_ids_to_remove = [source_id for source_id in c.fetchall()]
 
-    c.execute("""
-        DELETE FROM variables
-        WHERE id IN %s
-    """, [var_ids_to_remove])
+        c.execute("""
+            DELETE FROM data_values
+            WHERE variableId IN %s
+        """, [var_ids_to_remove])
 
-    # Only delete the sources if there are no variables referencing them
-    c.execute("""
-        DELETE sources
-        FROM sources
-        LEFT JOIN variables ON variables.sourceId = sources.id
-        WHERE
-            variables.id IS NULL
-            AND sources.id IN %s
-    """, [source_ids_to_remove])
+        c.execute("""
+            DELETE FROM variables
+            WHERE id IN %s
+        """, [var_ids_to_remove])
+
+        # Only delete the sources if there are no variables referencing them
+        if source_ids_to_remove:
+            c.execute("""
+                DELETE sources
+                FROM sources
+                LEFT JOIN variables ON variables.sourceId = sources.id
+                WHERE
+                    variables.id IS NULL
+                    AND sources.id IN %s
+            """, [source_ids_to_remove])
 
     # ==========================================================================
     # Upsert the tags & datasets.
