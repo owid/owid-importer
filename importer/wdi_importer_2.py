@@ -304,6 +304,17 @@ with connection as c:
         for category in categories
     ])
 
+    c.execute("""
+        SELECT name, id
+        FROM tags
+        WHERE parentId = %s
+    """, [parent_tag_id])
+
+    tag_id_by_category_name = {
+        name: tag_id
+        for name, tag_id in c.fetchall()
+    }
+
     dataset_names_to_upsert = {
         dataset_name_from_category(category)
         for category in categories
@@ -330,33 +341,6 @@ with connection as c:
         for name in dataset_names_to_upsert
     ])
 
-    # Associate each dataset with the appropriate tag
-    for category in categories:
-        c.execute("""
-            INSERT INTO
-                dataset_tags (datasetId, tagId)
-            SELECT
-                (
-                    SELECT id FROM datasets
-                    WHERE name = %(dataset_name)s
-                    AND namespace = %(namespace)s
-                    LIMIT 1
-                ) AS datasetId,
-                (
-                    SELECT id FROM tags
-                    WHERE name = %(category)s
-                    AND parentId = %(parent_tag_id)s
-                    LIMIT 1
-                ) AS tagId
-            ON DUPLICATE KEY UPDATE
-                tagId = VALUES(tagId)
-        """, { # ON DUPLICATE here only avoids error, it intentionally updates nothing
-            'dataset_name': dataset_name_from_category(category),
-            'namespace': DATASET_NAMESPACE,
-            'category': category,
-            'parent_tag_id': parent_tag_id
-        })
-
     c.execute("""
         SELECT name, id
         FROM datasets
@@ -370,6 +354,19 @@ with connection as c:
 
     for indicator in indicators:
         indicator['datasetId'] = dataset_id_by_name[indicator['datasetName']]
+
+    # Associate each dataset with the appropriate tag
+    c.executemany("""
+        INSERT INTO
+            dataset_tags (datasetId, tagId)
+        VALUES
+            (%s, %s)
+        ON DUPLICATE KEY UPDATE
+            tagId = VALUES(tagId)
+    """, [ # ON DUPLICATE here only avoids error, it intentionally updates nothing
+        (dataset_id_by_name[dataset_name_from_category(cat)], tag_id_by_category_name[cat])
+        for cat in categories
+    ])
 
     # ==========================================================================
     # Upsert the variables & sources.
