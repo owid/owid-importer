@@ -533,24 +533,23 @@ with connection as c:
         if normalise_country_name(country_name) not in entity_id_by_normalised_name
     )
 
-    c.executemany("""
-        INSERT INTO
-            entities (name, displayName, validated, createdAt, updatedAt)
-        VALUES
-            (%s, %s, FALSE, NOW(), NOW())
-    """, [
-        (name, name)
-        for name in entity_names_to_add
-    ])
+    if entity_names_to_add:
 
-    c.execute("""
-        SELECT name, id
-        FROM entities
-        WHERE name in %s
-    """, [entity_names_to_add])
+        c.executemany("""
+            INSERT INTO
+                entities (name, displayName, validated, createdAt, updatedAt)
+            VALUES
+                (%s, '', FALSE, NOW(), NOW())
+        """, entity_names_to_add)
 
-    for (name, new_id) in c.fetchall():
-        entity_id_by_normalised_name[normalise_country_name(name)] = new_id
+        c.execute("""
+            SELECT name, id
+            FROM entities
+            WHERE name in %s
+        """, [entity_names_to_add])
+
+        for (name, new_id) in c.fetchall():
+            entity_id_by_normalised_name[normalise_country_name(name)] = new_id
 
     # The WDI dataset can be inconsistent between sheets, e.g. Country sheet
     # uses 'Sub-Saharan Africa (IDA & IBRD)' while Data sheet uses
