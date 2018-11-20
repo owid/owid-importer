@@ -37,6 +37,12 @@ SERIES_EXPECTED_HEADERS = ('Series Code', 'Topic', 'Indicator Name', 'Short defi
 DATA_EXPECTED_HEADERS = ('Country Name', 'Country Code', 'Indicator Name', 'Indicator Code', str(FIRST_YEAR))
 COUNTRY_EXPECTED_HEADERS = ('Country Code', 'Short Name', 'Table Name', 'Long Name', '2-alpha code', 'Currency Unit', 'Special Notes', 'Region', 'Income Group', 'WB-2 code', 'National accounts base year', 'National accounts reference year', 'SNA price valuation', 'Lending category', 'Other groups', 'System of National Accounts', 'Alternative conversion factor', 'PPP survey year', 'Balance of Payments Manual in use', 'External debt Reporting status', 'System of trade', 'Government Accounting concept', 'IMF data dissemination standard', 'Latest population census', 'Latest household survey', 'Source of most recent Income and expenditure data', 'Vital registration complete', 'Latest agricultural census', 'Latest industrial data', 'Latest trade data')
 
+logging.basicConfig(
+    filename=os.path.join('..', 'logs', 'wdi_importer.log'),
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+)
+
 logger = logging.getLogger('importer')
 start_time = time.time()
 
@@ -110,7 +116,7 @@ def indicator_from_row(row):
 if not os.path.exists(DOWNLOADS_PATH):
     os.makedirs(DOWNLOADS_PATH)
 
-# logger.info("Getting the zip file")
+# logger.info("Getting the zip file...")
 # request_header = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36'}
 # r = requests.get(ZIP_FILE_URL, stream=True, headers=request_header)
 # if r.ok:
@@ -121,10 +127,9 @@ if not os.path.exists(DOWNLOADS_PATH):
 #     excel_filepath = DOWNLOADS_PATH + z.namelist()[0]  # there should be only one file inside the zipfile, so we will load that one
 #     z.extractall(DOWNLOADS_PATH)
 #     r = None  # we do not need the request anymore
-#     logger.info("Successfully extracted the zip file")
+#     logger.info("Successfully extracted the zip file.")
 # else:
-#     logger.error("The file could not be downloaded. Stopping the script...")
-#     sys.exit("Could not download file.")
+#     terminate("The ZIP file could not be downloaded.")
 
 excel_filepath = os.path.join(DOWNLOADS_PATH, 'WDIEXCEL.xlsx')
 
@@ -619,16 +624,10 @@ with connection as c:
             logger.info(message)
             print("\n" + message)
 
-
     sys.exit(1)
-
 
     # TODO Flag variables that are used but removed from the new dataset
     # TODO Flag entities that are gonna be added
-    # TODO check all DUPLICATE KEY updates correspond to correct names
-
-    sys.exit(1)
-
 
 
 
