@@ -13,16 +13,15 @@ from openpyxl import load_workbook
 # allow imports from parent directory
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 from db import connection
-from utils import file_checksum, extract_short_unit, get_row_values, starts_with, default
+from utils import file_checksum, extract_short_unit, get_row_values, starts_with, default, yesno, strlist
 
-USER_ID = 29 # The user ID that gets assigned in every user ID field
 DATASET_NAMESPACE = 'wdi'
 PARENT_TAG_NAME = 'World Development Indicators'  # set the name of the root category of all data that will be imported by this script
 ZIP_FILE_URL = 'http://databank.worldbank.org/data/download/WDI_excel.zip'
 FIRST_YEAR = 1960
 
 CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
-DOWNLOADS_PATH = os.path.join(CURRENT_PATH, '..', 'data', 'wdi_downloads')
+DOWNLOADS_PATH = os.path.join(CURRENT_PATH, '..', 'data', 'wdi')
 
 DEFAULT_SOURCE_DESCRIPTION = {
     'dataPublishedBy': 'World Bank – World Development Indicators',
@@ -38,13 +37,16 @@ DATA_EXPECTED_HEADERS = ('Country Name', 'Country Code', 'Indicator Name', 'Indi
 COUNTRY_EXPECTED_HEADERS = ('Country Code', 'Short Name', 'Table Name', 'Long Name', '2-alpha code', 'Currency Unit', 'Special Notes', 'Region', 'Income Group', 'WB-2 code', 'National accounts base year', 'National accounts reference year', 'SNA price valuation', 'Lending category', 'Other groups', 'System of National Accounts', 'Alternative conversion factor', 'PPP survey year', 'Balance of Payments Manual in use', 'External debt Reporting status', 'System of trade', 'Government Accounting concept', 'IMF data dissemination standard', 'Latest population census', 'Latest household survey', 'Source of most recent Income and expenditure data', 'Vital registration complete', 'Latest agricultural census', 'Latest industrial data', 'Latest trade data')
 
 logging.basicConfig(
-    filename=os.path.join('..', 'logs', 'wdi.log'),
-    level=logging.DEBUG,
+    filename=os.path.join(CURRENT_PATH, '..', 'logs', 'wdi.log'),
+    level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 )
 
 logger = logging.getLogger('importer')
-start_time = time.time()
+
+def info(message):
+    print(message)
+    logger.info(message)
 
 def terminate(message):
     logger.error(message)
@@ -116,22 +118,23 @@ def indicator_from_row(row):
 if not os.path.exists(DOWNLOADS_PATH):
     os.makedirs(DOWNLOADS_PATH)
 
-# logger.info("Getting the zip file...")
-# request_header = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36'}
-# r = requests.get(ZIP_FILE_URL, stream=True, headers=request_header)
-# if r.ok:
-#     with open(DOWNLOADS_PATH + 'wdi.zip', 'wb') as out_file:
-#         shutil.copyfileobj(r.raw, out_file)
-#     logger.info("Saved the zip file to disk.")
-#     z = zipfile.ZipFile(DOWNLOADS_PATH + 'wdi.zip')
-#     excel_filepath = DOWNLOADS_PATH + z.namelist()[0]  # there should be only one file inside the zipfile, so we will load that one
-#     z.extractall(DOWNLOADS_PATH)
-#     r = None  # we do not need the request anymore
-#     logger.info("Successfully extracted the zip file.")
-# else:
-#     terminate("The ZIP file could not be downloaded.")
-
 excel_filepath = os.path.join(DOWNLOADS_PATH, 'WDIEXCEL.xlsx')
+
+if not os.path.isfile(excel_filepath) or yesno("The spreadsheet has been downloaded before. Download latest version?"):
+    info("Getting the zip file...")
+    request_header = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36'}
+    r = requests.get(ZIP_FILE_URL, stream=True, headers=request_header)
+    if r.ok:
+        zip_filepath = os.path.join(DOWNLOADS_PATH, 'wdi.zip')
+        with open(zip_filepath, 'wb') as out_file:
+            shutil.copyfileobj(r.raw, out_file)
+        info("Saved the zip file to disk.")
+        z = zipfile.ZipFile(zip_filepath)
+        z.extractall(DOWNLOADS_PATH)
+        r = None  # we do not need the request anymore
+        info("Successfully extracted the zip file.")
+    else:
+        terminate("The ZIP file could not be downloaded.")
 
 # ==============================================================================
 # Load the worksheets we need and check that they have the columns we expect.
@@ -194,6 +197,13 @@ country_name_by_code['INX'] = 'Not classified'
 # https://github.com/PyMySQL/PyMySQL/blob/3ab3b275e3d60be733f2c3f1bf6cfd644863466c/pymysql/connections.py#L496-L505
 # `c` is a cursor.
 with connection as c:
+
+    c.execute("""
+        SELECT id FROM users WHERE email = 'daniel@gavrilov.co.uk'
+    """)
+
+    # The user ID that gets assigned in every user ID field
+    user_id = c.fetchone()[0]
 
     # ==========================================================================
     # Clear the database from old data_values, variables & sources.
@@ -337,7 +347,7 @@ with connection as c:
             dataEditedAt = VALUES(dataEditedAt),
             dataEditedByUserId = VALUES(dataEditedByUserId)
     """, [
-        (name, 'This is a dataset imported by the automated fetcher', DATASET_NAMESPACE, USER_ID, USER_ID, USER_ID)
+        (name, 'This is a dataset imported by the automated fetcher', DATASET_NAMESPACE, user_id, user_id, user_id)
         for name in dataset_names_to_upsert
     ])
 
@@ -548,7 +558,7 @@ with connection as c:
             WHERE name in %s
         """, [entity_names_to_add])
 
-        for (name, new_id) in c.fetchall():
+        for name, new_id in c.fetchall():
             entity_id_by_normalised_name[normalise_country_name(name)] = new_id
 
     # The WDI dataset can be inconsistent between sheets, e.g. Country sheet
@@ -560,6 +570,26 @@ with connection as c:
         for code, name in country_name_by_code.items()
     }
 
+
+    # ==========================================================================
+    # Confirmation to continue with the import.
+    # ==========================================================================
+
+    if var_ids_to_remove: info("%d variables are no longer published and WILL BE REMOVED.\n" % (len(var_ids_to_remove)))
+    if var_ids_to_discontinue:
+        info("%d variables are no longer published but CANNOT BE REMOVED as they are used in charts." % (len(var_ids_to_discontinue)))
+        info("Their IDs are: %s" % (strlist(var_ids_to_discontinue)))
+        info("Please make sure to go over them afterwards and check if they may have been renamed.\n")
+    if variables_to_add: info("%d new variables will be added." % (len(variables_to_add)))
+    if variables_to_update: info("%d variables will be updated." % (len(variables_to_update)))
+    if entity_names_to_add: info("%d new entity names will be added: %s" % (len(entity_names_to_add), strlist(entity_names_to_add)))
+
+    print()
+
+    confirmed = yesno("Do you wish to continue?")
+
+    if not confirmed:
+        terminate("User did not wish to continue")
 
     # ==========================================================================
     # Upsert all data_values.
@@ -623,12 +653,6 @@ with connection as c:
             logger.info(message)
             print("\n" + message)
 
-    sys.exit(1)
-
-    # TODO Flag variables that are used but removed from the new dataset
-    # TODO Flag entities that are gonna be added
-
-
-
-
-
+info("\nSuccessfully imported the whole spreadsheet... I mean, the whole thing is now in the database!")
+if var_ids_to_discontinue:
+    info("\nJust another reminder to look at the %s variables that are no longer published in the dataset." % (len(var_ids_to_discontinue)))

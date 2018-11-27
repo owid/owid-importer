@@ -1,5 +1,17 @@
 import hashlib
 
+def yesno(question):
+    reply = input(question + ' (y/n): ').lower().strip()
+    if reply[:1] == 'y':
+        return True
+    elif reply[:1] == 'n':
+        return False
+    else:
+        return yesno("Sorry, was that a yes or a no?")
+
+def strlist(iterable):
+    return ", ".join(str(i) for i in iterable)
+
 def get_row_values(row):
     get_cell_value = lambda cell: cell.value
     return tuple(get_cell_value(cell) for cell in row)
