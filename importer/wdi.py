@@ -1,13 +1,15 @@
 import sys
 import os
 import hashlib
+import csv
 import json
 import logging
 import requests
 import unidecode
 import shutil
-import time
 import zipfile
+import time
+from datetime import datetime
 from openpyxl import load_workbook
 
 # allow imports from parent directory
@@ -56,6 +58,9 @@ def terminate(message):
 def dataset_name_from_category(category):
     return 'World Development Indicators - ' + category
 
+def normalise_indicator_code(code):
+    return code.upper().strip()
+
 def normalise_country_name(country_name):
     return unidecode.unidecode(country_name.lower())
 
@@ -63,7 +68,7 @@ def normalise_country_name(country_name):
 def indicator_from_row(row):
     values = get_row_values(row)
 
-    code = values[0].upper().strip()
+    code = normalise_indicator_code(values[0])
     category = values[1].split(':')[0]
     name = values[2]
 
@@ -204,6 +209,53 @@ with connection as c:
 
     # The user ID that gets assigned in every user ID field
     user_id = c.fetchone()[0]
+
+    # ==========================================================================
+    # Rename any variable codes that changed since last import.
+    # Make sure to update wdi_code_changes.csv with the latest code changes
+    # which you can find on the WDI download website.
+    # ==========================================================================
+
+    c.execute("""
+        SELECT import_time FROM importer_importhistory
+        ORDER BY import_time DESC
+        LIMIT 1
+    """)
+
+    last_import_time = c.fetchone()[0]
+    last_code_change_time = None
+
+    # Before 29 November 2018 we didn't handle code changes.
+    # The import was first run on 6 July 2017, so we want to commit all code
+    # changes since then.
+    if last_import_time < datetime.strptime('29-Nov-18', '%d-%b-%y'):
+        last_code_change_time = datetime.strptime('07-Jul-17', '%d-%b-%y')
+    else:
+        last_code_change_time = last_import_time
+
+    code_changes = []
+
+    with open(os.path.join(CURRENT_PATH, 'wdi_code_changes.csv')) as csv_file:
+        reader = csv.reader(csv_file, delimiter=',')
+        next(reader) # skip headers
+        for datestr, old, new in reader:
+            date = datetime.strptime(datestr, '%d-%b-%y')
+            old = normalise_indicator_code(old)
+            new = normalise_indicator_code(new)
+            if date > last_code_change_time:
+                code_changes.append((date, old, new))
+
+    code_changes = sorted(code_changes)
+
+    for _, old_name, new_name in code_changes:
+        c.execute("""
+            UPDATE variables SET code = %(new_name)s
+            WHERE code = %(old_name)s
+        """, {
+            'new_name': new_name,
+            'old_name': old_name
+        })
+
 
     # ==========================================================================
     # Clear the database from old data_values, variables & sources.
@@ -575,6 +627,7 @@ with connection as c:
     # Confirmation to continue with the import.
     # ==========================================================================
 
+    if code_changes: info("%d variable codes will be renamed.\n" % (len(code_changes)))
     if var_ids_to_remove: info("%d variables are no longer published and WILL BE REMOVED.\n" % (len(var_ids_to_remove)))
     if var_ids_to_discontinue:
         info("%d variables are no longer published but CANNOT BE REMOVED as they are used in charts." % (len(var_ids_to_discontinue)))
@@ -653,6 +706,14 @@ with connection as c:
             logger.info(message)
             print("\n" + message)
 
+    c.execute("""
+        INSERT INTO importer_importhistory (import_type, import_time, import_notes, import_state)
+        VALUES ('wdi', NOW(), %(notes)s, %(state)s)
+    """, {
+        'notes': '',
+        'state': json.dumps({ 'file_checksum': file_checksum(excel_filepath) })
+    })
+
 info("\nSuccessfully imported the whole spreadsheet... I mean, the whole thing is now in the database!")
 if var_ids_to_discontinue:
-    info("\nJust another reminder to look at the %s variables that are no longer published in the dataset." % (len(var_ids_to_discontinue)))
+    info("\nJust another reminder to look at the %s variables that are no longer published in the spreadsheet." % (len(var_ids_to_discontinue)))
