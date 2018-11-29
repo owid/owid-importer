@@ -627,15 +627,15 @@ with connection as c:
     # Confirmation to continue with the import.
     # ==========================================================================
 
-    if code_changes: info("%d variable codes will be renamed.\n" % (len(code_changes)))
-    if var_ids_to_remove: info("%d variables are no longer published and WILL BE REMOVED.\n" % (len(var_ids_to_remove)))
+    if variables_to_add: info("\n%d new variables will be added." % (len(variables_to_add)))
+    if code_changes: info("\n%d variable codes will be renamed." % (len(code_changes)))
+    if variables_to_update: info("\n%d variables will be updated." % (len(variables_to_update)))
+    if var_ids_to_remove: info("\n%d variables are no longer published and WILL BE REMOVED." % (len(var_ids_to_remove)))
     if var_ids_to_discontinue:
-        info("%d variables are no longer published but CANNOT BE REMOVED as they are used in charts." % (len(var_ids_to_discontinue)))
+        info("\n%d variables are no longer published but CANNOT BE REMOVED as they are used in charts." % (len(var_ids_to_discontinue)))
         info("Their IDs are: %s" % (strlist(var_ids_to_discontinue)))
-        info("Please make sure to go over them afterwards and check if they may have been renamed.\n")
-    if variables_to_add: info("%d new variables will be added." % (len(variables_to_add)))
-    if variables_to_update: info("%d variables will be updated." % (len(variables_to_update)))
-    if entity_names_to_add: info("%d new entity names will be added: %s" % (len(entity_names_to_add), strlist(entity_names_to_add)))
+        info("Please make sure to go over them afterwards and check if they may have been renamed.")
+    if entity_names_to_add: info("\n%d new entity names will be added: %s" % (len(entity_names_to_add), strlist(entity_names_to_add)))
 
     print()
 
