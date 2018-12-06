@@ -4,9 +4,6 @@ import time
 
 # allow imports from parent directory
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from db import connection
-from utils import extract_short_unit, yesno
-from db_utils import DBUtils
 from gbd_tools import import_csv_files
 
 CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
