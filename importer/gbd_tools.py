@@ -10,7 +10,7 @@ import zipfile
 # allow imports from parent directory
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 from db import connection
-from utils import extract_short_unit, yesno
+from utils import extract_short_unit
 from db_utils import DBUtils
 
 def get_standard_name(entity_name):
@@ -180,10 +180,6 @@ def import_csv_files(measure_names,
                 total_data_values_upserted += len(data_values_to_insert)
                 data_values_to_insert = []
                 print_state()
-
-        confirm = yesno("\nApply import?")
-        if not confirm:
-            sys.exit(1)
 
         db.note_import(
             import_type=namespace,
