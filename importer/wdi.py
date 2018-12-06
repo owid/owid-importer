@@ -5,7 +5,6 @@ import csv
 import json
 import logging
 import requests
-import unidecode
 import shutil
 import zipfile
 import time
@@ -16,6 +15,7 @@ from openpyxl import load_workbook
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 from db import connection
 from utils import file_checksum, extract_short_unit, get_row_values, starts_with, default, yesno, strlist
+from db_utils import normalise_country_name
 
 DATASET_NAMESPACE = 'wdi'
 PARENT_TAG_NAME = 'World Development Indicators'  # set the name of the root category of all data that will be imported by this script
@@ -60,9 +60,6 @@ def dataset_name_from_category(category):
 
 def normalise_indicator_code(code):
     return code.upper().strip()
-
-def normalise_country_name(country_name):
-    return unidecode.unidecode(country_name.lower())
 
 # Extract indicator from row in Series worksheet
 def indicator_from_row(row):
