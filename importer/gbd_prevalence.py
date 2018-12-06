@@ -13,8 +13,8 @@ CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
 # 2. Select the following:
 #
 #    Measure:
-#    - Deaths
-#    - DALYs (Disability-Adjusted Life Years)
+#    - Prevalence
+#    - Incidence
 #
 #    Age:
 #    - All Ages
@@ -81,13 +81,13 @@ def get_var_code(row):
     )
 
 import_csv_files(
-    csv_dir=os.path.join(CURRENT_PATH, '..', 'data', 'gbd_cause', 'csv'),
-    measure_names=['Deaths', 'DALYs (Disability-Adjusted Life Years)'],
+    csv_dir=os.path.join(CURRENT_PATH, '..', 'data', 'gbd_prevalence', 'csv'),
+    measure_names=['Prevalence', 'Incidence'],
     age_names=['All Ages', 'Age-standardized', 'Under 5', '5-14 years', '15-49 years', '50-69 years', '70+ years'],
     metric_names=['Number', 'Rate', 'Percent'],
     sex_names=['Both'],
-    parent_tag_name='Global Burden of Disease Datasets - Causes',
-    namespace='gbd_cause',
+    parent_tag_name='Global Burden of Disease Datasets - Causes - Prevalence and Incidence',
+    namespace='gbd_prevalence',
     default_source_description = {
         'dataPublishedBy': "Global Burden of Disease Collaborative Network. Global Burden of Disease Study 2016 (GBD 2016) Results. Seattle, United States: Institute for Health Metrics and Evaluation (IHME), 2017.",
         'dataPublisherSource': None,

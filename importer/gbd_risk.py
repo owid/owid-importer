@@ -28,13 +28,14 @@ CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
 #    Metric:
 #    - Number
 #    - Rate
-#    - Percent
 #
 #    Year: select all
 #
-#    Cause: select all
+#    Risks: select all
 #
-#    Context: Cause
+#    Cause: Total All Causes
+#
+#    Context: Risk
 #
 #    Location:
 #    - select all countries
@@ -60,12 +61,12 @@ CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
 #
 
 def get_key(row):
-    return row['cause_name']
+    return row['rei_name']
 
 def get_var_name(row):
     return '%s - %s - Sex: %s - Age: %s (%s)' % (
         row['measure_name'],
-        row['cause_name'],
+        row['rei_name'],
         row['sex_name'],
         row['age_name'],
         row['metric_name']
@@ -74,20 +75,20 @@ def get_var_name(row):
 def get_var_code(row):
     return '%s %s %s %s %s' % (
         row['measure_id'],
-        row['cause_id'],
+        row['rei_id'],
         row['sex_id'],
         row['age_id'],
         row['metric_id']
     )
 
 import_csv_files(
-    csv_dir=os.path.join(CURRENT_PATH, '..', 'data', 'gbd_cause', 'csv'),
+    csv_dir=os.path.join(CURRENT_PATH, '..', 'data', 'gbd_risk', 'csv'),
     measure_names=['Deaths', 'DALYs (Disability-Adjusted Life Years)'],
     age_names=['All Ages', 'Age-standardized', 'Under 5', '5-14 years', '15-49 years', '50-69 years', '70+ years'],
-    metric_names=['Number', 'Rate', 'Percent'],
+    metric_names=['Number', 'Rate'],
     sex_names=['Both'],
-    parent_tag_name='Global Burden of Disease Datasets - Causes',
-    namespace='gbd_cause',
+    parent_tag_name='Global Burden of Disease Datasets - Risks',
+    namespace='gbd_risk',
     default_source_description = {
         'dataPublishedBy': "Global Burden of Disease Collaborative Network. Global Burden of Disease Study 2016 (GBD 2016) Results. Seattle, United States: Institute for Health Metrics and Evaluation (IHME), 2017.",
         'dataPublisherSource': None,

@@ -13,8 +13,7 @@ CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
 # 2. Select the following:
 #
 #    Measure:
-#    - Deaths
-#    - DALYs (Disability-Adjusted Life Years)
+#    - Prevalence
 #
 #    Age:
 #    - All Ages
@@ -24,6 +23,11 @@ CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
 #    - 15-49 years
 #    - 50-69 years
 #    - 70+ years
+#    - 10 to 14
+#    - 15 to 19
+#    - 20 to 24
+#    - 25 to 29
+#    - 30 to 34
 #
 #    Metric:
 #    - Number
@@ -32,7 +36,9 @@ CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
 #
 #    Year: select all
 #
-#    Cause: select all
+#    Cause:
+#    - All under B.6
+#    - All under B.7
 #
 #    Context: Cause
 #
@@ -44,6 +50,8 @@ CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
 #
 #    Sex:
 #    - Both
+#    - Male
+#    - Female
 #
 # 3. The tool will then create a dataset for you in chunks. Once it's finished
 #    (which may take several hours) this command might be helpful to download
@@ -81,13 +89,13 @@ def get_var_code(row):
     )
 
 import_csv_files(
-    csv_dir=os.path.join(CURRENT_PATH, '..', 'data', 'gbd_cause', 'csv'),
-    measure_names=['Deaths', 'DALYs (Disability-Adjusted Life Years)'],
-    age_names=['All Ages', 'Age-standardized', 'Under 5', '5-14 years', '15-49 years', '50-69 years', '70+ years'],
+    csv_dir=os.path.join(CURRENT_PATH, '..', 'data', 'gbd_mental_health', 'csv'),
+    measure_names=['Prevalence'],
+    age_names=['All Ages', '10 to 14', '15 to 19', '20 to 24', '25 to 29', '30 to 34', 'Age-standardized', 'Under 5', '5-14 years', '15-49 years', '50-69 years', '70+ years'],
     metric_names=['Number', 'Rate', 'Percent'],
-    sex_names=['Both'],
-    parent_tag_name='Global Burden of Disease Datasets - Causes',
-    namespace='gbd_cause',
+    sex_names=['Both', 'Male', 'Female'],
+    parent_tag_name='Global Burden of Disease Datasets - Mental Health',
+    namespace='gbd_mental_health',
     default_source_description = {
         'dataPublishedBy': "Global Burden of Disease Collaborative Network. Global Burden of Disease Study 2016 (GBD 2016) Results. Seattle, United States: Institute for Health Metrics and Evaluation (IHME), 2017.",
         'dataPublisherSource': None,

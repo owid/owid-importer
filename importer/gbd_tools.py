@@ -35,7 +35,10 @@ def import_csv_files(measure_names,
                      parent_tag_name,
                      namespace,
                      csv_dir,
-                     default_source_description):
+                     default_source_description,
+                     get_key,
+                     get_var_name,
+                     get_var_code):
 
     with connection as c:
 
@@ -111,6 +114,8 @@ def import_csv_files(measure_names,
                     if row_number % 100 == 0:
                         time.sleep(0.001)  # this is done in order to not keep the CPU busy all the time, the delay after each 100th row is 1 millisecond
 
+                    key = get_key(row)
+
                     # Skip rows we don't want to import
                     if row['sex_name'] not in sex_names \
                         or row['age_name'] not in age_names \
@@ -118,39 +123,27 @@ def import_csv_files(measure_names,
                         or row['measure_name'] not in measure_names:
                         continue
 
-                    if row['cause_name'] not in tag_id_by_name:
-                        tag_id_by_name[row['cause_name']] = db.upsert_tag(row['cause_name'], parent_tag_id)
+                    if key not in tag_id_by_name:
+                        tag_id_by_name[key] = db.upsert_tag(key, parent_tag_id)
 
-                    if row['cause_name'] not in dataset_id_by_name:
-                        dataset_id_by_name[row['cause_name']] = db.upsert_dataset(
-                            name=row['cause_name'],
+                    if key not in dataset_id_by_name:
+                        dataset_id_by_name[key] = db.upsert_dataset(
+                            name=key,
                             namespace=namespace,
-                            tag_id=tag_id_by_name[row['cause_name']],
+                            tag_id=tag_id_by_name[key],
                             user_id=user_id
                         )
 
-                    if row['cause_name'] not in source_id_by_name:
-                        source_id_by_name[row['cause_name']] = db.upsert_source(
-                            name=row['cause_name'],
+                    if key not in source_id_by_name:
+                        source_id_by_name[key] = db.upsert_source(
+                            name=key,
                             description=json.dumps(default_source_description),
-                            dataset_id=dataset_id_by_name[row['cause_name']]
+                            dataset_id=dataset_id_by_name[key]
                         )
 
-                    var_name = '%s - %s - Sex: %s - Age: %s (%s)' % (
-                        row['measure_name'],
-                        row['cause_name'],
-                        row['sex_name'],
-                        row['age_name'],
-                        row['metric_name']
-                    )
+                    var_name = get_var_name(row)
 
-                    var_code = '%s %s %s %s %s' % (
-                        row['measure_id'],
-                        row['cause_id'],
-                        row['sex_id'],
-                        row['age_id'],
-                        row['metric_id']
-                    )
+                    var_code = get_var_code(row)
 
                     if var_code not in var_id_by_code:
                         var_id_by_code[var_code] = db.upsert_variable(
@@ -158,8 +151,8 @@ def import_csv_files(measure_names,
                             code=var_code,
                             unit=row['metric_name'],
                             short_unit=extract_short_unit(row['metric_name']),
-                            dataset_id=dataset_id_by_name[row['cause_name']],
-                            source_id=source_id_by_name[row['cause_name']]
+                            dataset_id=dataset_id_by_name[key],
+                            source_id=source_id_by_name[key]
                         )
                         touched_var_codes.add(var_code)
                     elif var_code not in touched_var_codes:
