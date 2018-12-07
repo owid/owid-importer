@@ -21,3 +21,4 @@ grapher_admin/static/build
 .netlify
 *.swp
 fixtures/owid_datavalues.sql
+.DS_Store
