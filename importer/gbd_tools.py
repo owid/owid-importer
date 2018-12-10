@@ -181,7 +181,7 @@ def import_csv_files(measure_names,
                             db.execute_until_empty("""
                                 DELETE FROM data_values
                                 WHERE data_values.variableId = %s
-                                LIMIT 10000
+                                LIMIT 50000
                             """, [var_id_by_code[var_code]])
                             cleared_var_codes.add(var_code)
 
