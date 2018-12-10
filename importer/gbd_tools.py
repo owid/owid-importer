@@ -104,6 +104,9 @@ def import_csv_files(measure_names,
             # Keep track of variables that we have changed the `updatedAt` column for
             touched_var_codes = set()
 
+            # Keep track of which variables have had their data_values removed
+            cleared_var_codes = set()
+
             # Intentionally kept empty in order to force sources to be updated (in order
             # to update `retrievedDate`)
             source_id_by_name = {}
@@ -114,8 +117,6 @@ def import_csv_files(measure_names,
                     (value, year, entityId, variableId)
                 VALUES
                     (%s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    value = VALUES(value)
             """
 
             for filename in glob.glob(os.path.join(csv_dir, '*.csv')):
@@ -174,6 +175,15 @@ def import_csv_files(measure_names,
                         elif var_code not in touched_var_codes:
                             db.touch_variable(var_id_by_code[var_code])
                             touched_var_codes.add(var_code)
+
+                        if var_code not in cleared_var_codes:
+                            print("Clearing values for %s..." % (var_code,))
+                            db.execute_until_empty("""
+                                DELETE FROM data_values
+                                WHERE data_values.variableId = %s
+                                LIMIT 10000
+                            """, [var_id_by_code[var_code]])
+                            cleared_var_codes.add(var_code)
 
                         var_id = var_id_by_code[var_code]
                         entity_name = get_standard_name(row['location_name'])

@@ -65,6 +65,12 @@ class DBUtils:
     def upsert_many(self, query, tuples):
         self.cursor.executemany(query, tuples)
 
+    def execute_until_empty(self, *args, **kwargs):
+        first = True
+        while first or self.cursor.rowcount > 0:
+            first = False
+            self.cursor.execute(*args, **kwargs)
+
     def __fetch_parent_tag(self, name):
         (tag_id,) = self.fetch_one("""
             SELECT id FROM tags
