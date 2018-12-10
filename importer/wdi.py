@@ -642,9 +642,27 @@ with connection as c:
         terminate("User did not wish to continue")
 
     # ==========================================================================
-    # Upsert all data_values.
+    # Delete and reinsert all data_values.
     # This will take a while as more than 1 million rows are inserted.
     # ==========================================================================
+
+    message = 'Deleting data_values for the updated variables, this will take a while...'
+    logger.info(message)
+    print(message)
+
+    # Clear the existing data_values for the variables that we will update
+    first = True
+    while first or c.rowcount > 0:
+        first = False
+        c.execute("""
+            DELETE FROM data_values
+            WHERE variableId IN (
+                SELECT id FROM variables
+                WHERE code IN %s
+            )
+            LIMIT 100000
+        """, [list(indicator_by_code.keys())])
+
 
     start_year = FIRST_YEAR
     end_year = last_available_year
@@ -692,8 +710,6 @@ with connection as c:
                 data_values (value, year, entityId, variableId)
             VALUES
                 (%s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                value = VALUES(value)
         """, data_values_to_insert)
 
         total_inserted += len(data_values_to_insert)
