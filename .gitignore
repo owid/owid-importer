@@ -3,6 +3,7 @@
 /public/uploads/*
 .env
 .idea/
+.vscode/
 db.sqlite3
 __pycache__/
 *.py[cod]
