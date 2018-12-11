@@ -656,12 +656,9 @@ with connection as c:
         first = False
         c.execute("""
             DELETE FROM data_values
-            WHERE variableId IN (
-                SELECT id FROM variables
-                WHERE code IN %s
-            )
+            WHERE variableId IN %s
             LIMIT 100000
-        """, [list(indicator_by_code.keys())])
+        """, [list(variable_id_by_code.values())])
 
 
     start_year = FIRST_YEAR
