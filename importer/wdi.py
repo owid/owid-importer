@@ -658,7 +658,11 @@ with connection as c:
             DELETE FROM data_values
             WHERE variableId IN %s
             LIMIT 100000
-        """, [list(variable_id_by_code.values())])
+        """, [[
+            # We don't want to remove any discontinued variables
+            variable_id_by_code[indicator['code']]
+            for indicator in indicators
+        ]])
 
 
     start_year = FIRST_YEAR
