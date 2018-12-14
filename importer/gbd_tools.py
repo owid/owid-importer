@@ -181,20 +181,19 @@ def import_csv_files(measure_names,
                             db.touch_variable(var_id_by_code[var_code])
                             touched_var_codes.add(var_code)
 
-                        if var_code not in cleared_var_codes:
-                            print("Clearing values for %s..." % (var_code,))
-                            db.execute_until_empty("""
-                                DELETE FROM data_values
-                                WHERE data_values.variableId = %s
-                                LIMIT 50000
-                            """, [var_id_by_code[var_code]])
-                            cleared_var_codes.add(var_code)
-
                         var_id = var_id_by_code[var_code]
                         entity_name = get_standard_name(row['location_name'])
                         entity_id = db.get_or_create_entity(entity_name)
                         value = get_metric_value(row)
                         year = int(row['year'])
+
+                        if var_code not in cleared_var_codes:
+                            db.execute_until_empty("""
+                                DELETE FROM data_values
+                                WHERE data_values.variableId = %s
+                                LIMIT 100000
+                            """, [var_id])
+                            cleared_var_codes.add(var_code)
 
                         data_values_to_insert.append(
                             (value, year, entity_id, var_id)
