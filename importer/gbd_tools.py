@@ -117,7 +117,12 @@ def import_csv_files(measure_names,
                     (value, year, entityId, variableId)
                 VALUES
                     (%s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    value = VALUES(value)
             """
+            # We need an ON DUPLICATE handler here because the GBD dataset has
+            # South Asia under two codes: 158 and 159. Both have the same values
+            # in our extract, so we can safely ignore overwrites.
 
             for filename in glob.glob(os.path.join(csv_dir, '*.csv')):
                 with open(filename, 'r', encoding='utf8') as f:
