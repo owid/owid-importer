@@ -294,9 +294,10 @@ class DBUtils:
         })
         # Merge the two dicts
         self.entity_id_by_normalised_name.update({
-            # country_tool_name → entityId
-            **dict((row[0], row[2]) for row in rows if row[0]),
             # entityName → entityId
-            **dict((row[1], row[2]) for row in rows if row[1])
+            **dict((row[1], row[2]) for row in rows if row[1]),
+            # country_tool_name → entityId
+            # the country tool name should take precedence
+            **dict((row[0], row[2]) for row in rows if row[0])
         })
 

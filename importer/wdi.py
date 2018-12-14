@@ -580,10 +580,10 @@ with connection as c:
     # Merge the two dicts
     # This will be updated with entities added later.
     entity_id_by_normalised_name = {
-        # country_tool_name → entityId
-        **dict((row[0], row[2]) for row in rows if row[0]),
         # entityName → entityId
-        **dict((row[1], row[2]) for row in rows if row[1])
+        **dict((row[1], row[2]) for row in rows if row[1]),
+        # country_tool_name → entityId
+        **dict((row[0], row[2]) for row in rows if row[0])
     }
 
     entity_names_to_add = set(
