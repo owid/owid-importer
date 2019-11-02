@@ -48,7 +48,7 @@
     "concurrently": "^3.4.0",
     "cookie-parser": "^1.4.3",
     "css-loader": "^0.26.1",
-    "csv-parse": "^1.2.0",
+    "csv-parse": "^4.4.6",
     "d3": "^4.5.0",
     "d3-geo-projection": "^2.1.0",
     "d3-scale-chromatic": "^1.1.1",
