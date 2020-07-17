@@ -73,7 +73,7 @@
     "linkifyjs": "^2.1.5",
     "localeval": "^15.2.3",
     "lockfile": "^1.0.3",
-    "lodash": "^4.17.4",
+    "lodash": "^4.17.19",
     "lodash-es": "^4.17.4",
     "md5": "^2.2.1",
     "minimatch": "^3.0.4",
