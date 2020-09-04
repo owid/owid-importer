@@ -85,7 +85,7 @@
     "module-alias": "^2.0.3",
     "mysql": "^2.15.0",
     "node-django-hashers": "^1.0.9",
-    "node-sass": "^4.7.2",
+    "node-sass": "^4.13.1",
     "nodemon": "^1.12.5",
     "normalize.css": "^5.0.0",
     "optimize-css-assets-webpack-plugin": "^4.0.0",
